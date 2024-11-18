@@ -18,11 +18,11 @@ load_dotenv()
 
 app = Flask(__name__)
 
-print(f"user: {os.getenv("DB_USER")}")
-print(f"user: {os.getenv("DB_PASSWORD")}")
-print(f"user: {os.getenv("DB_HOST")}")
-print(f"user: {os.getenv("DB_PORT")}")
-print(f"user: {os.getenv("DB_NAME")}")
+print(f'user: {os.getenv("DB_USER")}')
+print(f'user: {os.getenv("DB_PASSWORD")}')
+print(f'user: {os.getenv("DB_HOST")}')
+print(f'user: {os.getenv("DB_PORT")}')
+print(f'user: {os.getenv("DB_NAME")}')
 
 # Connect to PostgreSQL database
 # Establish the connection
