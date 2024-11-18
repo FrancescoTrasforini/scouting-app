@@ -124,7 +124,7 @@
                     document.querySelectorAll('.create-profile-btn').forEach(button => {
                         button.addEventListener('click', function () {
                             const playerName = button.getAttribute('data-player');
-                            window.location.href = `player-profile.html?player-profile=${encodeURIComponent(playerName)}`;
+                            window.location.href = `player-profile.html?player=${encodeURIComponent(playerName)}`;
                         });
                     });
                 },
