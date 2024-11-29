@@ -6,8 +6,13 @@
     <title>Football Player Recruitment</title>
     <!-- Include Bootstrap for styling (optional) -->
     <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="static/css/styles.css">
 </head>
 <body>
+    <!-- Team Logo -->
+    <div class="logo-container">
+        <img src="static/logo.jpg" alt="Team Logo" class="team-logo">
+    </div>
     <div class="container">
         <h1>Football Player Data</h1>
         <!-- Role filter dropdown -->
@@ -34,6 +39,14 @@
             <!-- Generate options dynamically in JavaScript -->
         </select>
 
+        <!-- Tier filter -->
+        <label for="tierFilter">Select tier of football:</label>
+        <select id="tierFilter">
+            <option value="Tier 5">Tier 5 - National League</option>
+            <option value="Tier 6">Tier 6 - National League North and South</option>
+            <option value="Tier 7">Tier 7 & Youth Leagues</option>
+        </select>
+
         <!-- Buttons: Create Shortlist, Compare, Refresh -->
         <div class="d-flex justify-content-between mb-3">
             <button id="createShortlist" class="btn btn-primary">Create Shortlist</button>
@@ -45,26 +58,16 @@
         </div>
         <hr>
         <div id="info"></div>
+
         <!-- Shortlist Table (hidden by default) -->
         <table class="table" id="shortlistTable" style="display: none;">
             <thead>
-                <tr>
-                    <th>Player</th>
-                    <th>Team</th>
-                    <th>Age</th>
-                    <th>Minutes Played</th>
-                    <th>Position</th>
-                    <th>Successful Defensive Actions per 90</th>
-                    <th>PAdj Interceptions</th>
-                    <th>Progressive Runs per 90</th>
-                    <th>Accurate Crosses, %</th>
-                    <th>Progressive Passes per 90</th>
-                    <th>Total Score</th>
-                    <th></th>
+                <tr id="shortlistTableHeader">
+                    <!-- Dynamic headers will be added here -->
                 </tr>
             </thead>
             <tbody id="shortlistTableBody">
-                <!-- Shortlist rows will be added here -->
+                <!-- Dynamic rows will be added here -->
             </tbody>
         </table>
         
@@ -77,7 +80,6 @@
                     <th>Age</th>
                     <th>Minutes Played</th>
                     <th></th>
-                    <!-- Add more columns as needed -->
                 </tr>
             </thead>
             <tbody id="playersTableBody">
@@ -100,10 +102,10 @@
 
     <!-- Include custom JS to handle data fetching and display -->
     <script>
-        // Function to fetch player data based on selected role
-        function fetchPlayersByRole(role) {
+        // Function to fetch player data based on selected role and tier
+        function fetchPlayersByRole(role, tier) {
             $.ajax({
-                url: `/players?role=${role}`,  // Backend API endpoint
+                url: `/players?role=${role}&tier=${tier}`,  // Corrected URL construction
                 method: 'GET',
                 success: function(data) {
                     const playersTableBody = document.getElementById('playersTableBody');
@@ -120,11 +122,34 @@
                         `;
                         playersTableBody.appendChild(row);
                     });
+
                     // Add event listener for 'Create Profile' button
-                    document.querySelectorAll('.create-profile-btn').forEach(button => {
+                    document.querySelectorAll('.create-profile-btn').forEach(button => { 
                         button.addEventListener('click', function () {
                             const playerName = button.getAttribute('data-player');
-                            window.location.href = `player-profile.html?player=${encodeURIComponent(playerName)}`;
+
+                            // Get the selected role from the roleFilter dropdown
+                            const roleFilter = document.getElementById('roleFilter'); 
+                            const selectedRole = roleFilter ? roleFilter.value : null;
+
+                            // Get the selected tier from the tierFilter dropdown
+                            const tierFilter = document.getElementById('tierFilter'); 
+                            const selectedTier = tierFilter ? tierFilter.value : null;
+
+                            // Construct the URL with both player name and role
+                            const url = new URL('player-profile.html', window.location.origin);
+                            url.searchParams.append('player', playerName);
+
+                            if (selectedRole) {
+                                url.searchParams.append('role', selectedRole);
+                            }
+
+                            if (selectedTier) {
+                                url.searchParams.append('tier', selectedTier);
+                            }
+
+                            // Redirect to the constructed URL
+                            window.location.href = url.toString();
                         });
                     });
                 },
@@ -134,14 +159,22 @@
             });
         }
 
-        // Event listener for filter change
+        // Event listener for role filter change
         document.getElementById('roleFilter').addEventListener('change', function() {
             const selectedRole = this.value;
-            fetchPlayersByRole(selectedRole);  // Fetch players based on selected role
+            const selectedTier = document.getElementById('tierFilter').value; // Get selected tier
+            fetchPlayersByRole(selectedRole, selectedTier);  // Fetch players based on selected role and tier
         });
 
-        // Fetch default role players (e.g., RWB) when page loads
-        fetchPlayersByRole('RWB');
+        // Event listener for tier filter change
+        document.getElementById('tierFilter').addEventListener('change', function() {
+            const selectedTier = this.value;
+            const selectedRole = document.getElementById('roleFilter').value; // Get selected role
+            fetchPlayersByRole(selectedRole, selectedTier);  // Fetch players based on selected role and tier
+        });
+
+        
+
 
         document.addEventListener("DOMContentLoaded", function () {
             // Populate 'Minimum Played Minutes' filter
@@ -172,70 +205,166 @@
                 const ageConditionValue = ageCondition.value;
                 const ageValueValue = ageValue.value;
                 const minutesValue = minutesFilter.value;
+                const selectedTier = document.getElementById('tierFilter').value;
 
                 // Create URLSearchParams object
                 const params = new URLSearchParams({
                     role: selectedRole,
                     ageCondition: ageConditionValue,
                     ageValue: ageValueValue,
-                    minutes: minutesValue
+                    minutes: minutesValue,
+                    tier: selectedTier
                 });
 
                 fetch(`/shortlist?${params.toString()}`)
                     .then(response => response.json())
                     .then(data => {
-                        const countPlayers = data.count; // Get the player count
-                        const players = data.shortlist_data; // Get the shortlist data
+                        const { columns, shortlist_data: players, count } = data; // Extract columns, players, and count
                         const shortlistTableBody = document.getElementById('shortlistTableBody');
+                        const shortlistTableHeader = document.querySelector('#shortlistTable thead tr');
                         shortlistTableBody.innerHTML = ''; // Clear existing rows
+                        shortlistTableHeader.innerHTML = ''; // Clear existing headers
 
-                        // Display the player count
-                        const infoDiv = document.getElementById('info'); // Add an element with id="info" in your HTML
-                        infoDiv.innerText = `Total scores are computed as the sum of the percentile values in the shown metrics.\nPlayers in the filtered dataset: ${countPlayers}`;
+                        // Display player count
+                        const infoDiv = document.getElementById('info');
+                        infoDiv.innerText = `Total scores are computed as the sum of the percentile values in the shown metrics.\nPlayers in the filtered dataset: ${count}`;
+
+                        // Define columns that shouldn't show percentiles
+                        const noPercentileColumns = ['Player', 'Team', 'Age', 'Minutes played', 'Position', 'Total Score'];
+
+                        // Create dynamic table headers
+                        columns.forEach(column => {
+                            const th = document.createElement('th');
+                            th.textContent = column;
+                            shortlistTableHeader.appendChild(th);
+                        });
+
+                        // Add static "Total Score" and action columns
+                        const totalScoreHeader = document.createElement('th');
+                        totalScoreHeader.textContent = 'Total Score';
+                        shortlistTableHeader.appendChild(totalScoreHeader);
+
+                        const actionHeader = document.createElement('th');
+                        actionHeader.textContent = '';
+                        shortlistTableHeader.appendChild(actionHeader);
+
+                        // Columns to keep as integers
+                        const integerColumns = ['Age', 'Minutes played', 'Total Score'];
+
+                        // Populate rows dynamically
                         players.forEach(player => {
                             const row = document.createElement('tr');
-                            
-                            row.innerHTML = `
-                                <td>${player.Player}</td>
-                                <td>${player.Team}</td>
-                                <td>${player.Age}</td>
-                                <td>${player["Minutes played"]}</td>
-                                <td>${player.Position}</td>
-                                <td>${player['Successful defensive actions per 90'].toFixed(2)} (${player['Successful defensive actions per 90 Percentile'] || 'N/A'}th)</td>
-                                <td>${player['PAdj Interceptions'].toFixed(2)} (${player['PAdj Interceptions Percentile'] || 'N/A'}th)</td>
-                                <td>${player['Progressive runs per 90'].toFixed(2)} (${player['Progressive runs per 90 Percentile'] || 'N/A'}th)</td>
-                                <td>${player['Accurate crosses, %'].toFixed(2)} (${player['Accurate crosses, % Percentile'] || 'N/A'}th)</td>
-                                <td>${player['Progressive passes per 90'].toFixed(2)} (${player['Progressive passes per 90 Percentile'] || 'N/A'}th)</td>
-                                <td>${player['Total Score']}</td>
-                                <td><button class="create-profile-btn" data-player="${player.Player}">Create Profile</button></td>
-                            `;
+
+                            // Create cells for each column dynamically
+                            columns.forEach(column => {
+                                const cell = document.createElement('td');
+                                let value = player[column];
+
+                                if (value !== undefined && value !== null) {
+                                    // Handle specific integer columns
+                                    if (integerColumns.includes(column)) {
+                                        value = Math.round(value); // Ensure integer
+                                    } 
+                                    // Handle numeric values for other columns
+                                    else if (typeof value === 'number') {
+                                        value = value.toFixed(2); // Round to 2 decimals
+                                    }
+                                } else {
+                                    value = 'N/A';
+                                }
+
+                                // Check for percentile values if column is not in the exclusion list
+                                const percentileColumn = `${column} Percentile`;
+                                const percentile =
+                                    !noPercentileColumns.includes(column) && player[percentileColumn] !== undefined
+                                        ? `${player[percentileColumn]}th`
+                                        : null;
+
+                                // Append percentile if it exists and is not excluded
+                                cell.textContent = percentile ? `${value} (${percentile})` : value;
+
+                                row.appendChild(cell);
+                            });
+
+                            // Add Total Score cell (as an integer)
+                            const totalScoreCell = document.createElement('td');
+                            totalScoreCell.textContent = player['Total Score'] ? Math.round(player['Total Score']) : 'N/A';
+                            row.appendChild(totalScoreCell);
+
+                            // Add action button cell
+                            const actionCell = document.createElement('td');
+                            const actionButton = document.createElement('button');
+                            actionButton.textContent = 'Create Profile';
+                            actionButton.classList.add('create-profile-btn');
+                            actionButton.setAttribute('data-player', player.Player);
+                            actionCell.appendChild(actionButton);
+                            row.appendChild(actionCell);
+
                             shortlistTableBody.appendChild(row);
                         });
 
-                        // Add event listener for 'Create Profile' button
+                        // Add event listener for 'Create Profile' buttons
                         document.querySelectorAll('.create-profile-btn').forEach(button => {
                             button.addEventListener('click', function () {
                                 const playerName = button.getAttribute('data-player');
-                                window.location.href = `player-profile.html?player=${encodeURIComponent(playerName)}`;
+                                // Get the selected role from the roleFilter dropdown
+                                const roleFilter = document.getElementById('roleFilter'); 
+                                const selectedRole = roleFilter ? roleFilter.value : null;
+                                // Get the selected tier from the tierFilter dropdown
+                                const tierFilter = document.getElementById('tierFilter'); 
+                                const selectedTier = tierFilter ? tierFilter.value : null;
+                                // Construct the URL with both player name, role, and tier
+                                const url = new URL('player-profile.html', window.location.origin);
+                                url.searchParams.append('player', playerName);
+                                if (selectedRole) {
+                                    url.searchParams.append('role', selectedRole);
+                                }
+
+                                if (selectedTier) {
+                                    url.searchParams.append('tier', selectedTier);
+                                }
+                                // Redirect to the constructed URL
+                                window.location.href = url.toString();
                             });
                         });
 
-                        // Hide the players table, show the shortlist table and the Compare button
+                        // Display Compare button and add event listener
+                        const compareButton = document.getElementById('compareButton');
+                        compareButton.style.display = 'inline-block';
+
+                        compareButton.addEventListener('click', function () {
+                            // Get the names of shortlisted players
+                            const playerNames = Array.from(document.querySelectorAll("#shortlistTable tbody tr"))
+                                .map(row => row.querySelector("td:nth-child(1)").innerText); // Get Player column (assumed as first column)
+                            const queryParam = encodeURIComponent(playerNames.join(','));
+
+                            // Get the selected role from the roleFilter dropdown
+                            const roleFilter = document.getElementById('roleFilter');
+                            const selectedRole = roleFilter ? roleFilter.value : null;
+
+                            // Get the selected tier from the tierFilter dropdown
+                            const tierFilter = document.getElementById('tierFilter');
+                            const selectedTier = tierFilter ? tierFilter.value : null;
+
+                            // Construct the URL for the compare page
+                            const url = new URL('compare.html', window.location.origin);
+                            url.searchParams.append('shortlist', queryParam);
+
+                            // Append role and tier parameters if they are selected
+                            if (selectedRole) {
+                                url.searchParams.append('role', selectedRole);
+                            }
+                            if (selectedTier) {
+                                url.searchParams.append('tier', selectedTier);
+                            }
+
+                            // Redirect to the constructed URL
+                            window.location.href = url.toString();
+                        });
+
+                        // Show the shortlist table and hide the players table
                         document.getElementById('playersTable').style.display = 'none';
                         document.getElementById('shortlistTable').style.display = 'table';
-                        document.getElementById("compareButton").style.display = "inline-block";
-
-                        // Add event listener for 'Compare' button
-                        document.getElementById('compareButton').addEventListener('click', function () {
-                            const playerNames = [];
-                            document.querySelectorAll("#shortlistTable tbody tr").forEach(row => {
-                                const playerName = row.querySelector("td:nth-child(1)").innerText; // Assuming 'Player' is in the first column
-                                playerNames.push(playerName);
-                            });
-                        // Redirect to compare.html with players as query parameter
-                        const queryParam = encodeURIComponent(playerNames.join(',')); // Join names into a comma-separated string
-                        window.location.href = `compare.html?shortlist=${queryParam}`;
-                    });
                     })
                     .catch(error => console.error('Error fetching shortlist:', error));
             });

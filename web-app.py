@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors 
 import numpy as np
 from mplsoccer import PyPizza, add_image
+from urllib.parse import unquote
 import io
 import base64
 
@@ -37,6 +38,46 @@ conn = pg8000.connect(
 # Create a cursor to execute SQL queries
 cursor = conn.cursor()
 
+# Define role-to-position mapping
+role_position_mapping = {
+    'GK': ['GK'],
+    'RWB': ['RCB', 'RB', 'RWB', 'RCMF', 'RW', 'RAMF', 'RWF'],
+    'LWB': ['LCB', 'LB', 'LWB', 'LCMF', 'LW', 'LAMF', 'LWF'],
+    'CM': ['RCMF', 'CM', 'LCMF'],
+    'CF': ['CF'],
+}
+
+# Define role-to-columns mapping
+role_column_mapping = {
+    'GK': [
+        "Prevented goals per 90", "Aerial duels won, %", "Accurate long passes, %",
+        "Accurate passes, %", "PAdj Interceptions"
+    ],
+    'RWB': [
+        "Successful defensive actions per 90", "PAdj Interceptions",
+        "Progressive runs per 90", "Accurate crosses, %", "Progressive passes per 90"
+    ],
+}
+
+# Role-agnostic mapping for shorter metric labels
+metric_labels = {
+    "Successful defensive actions per 90": "Defensive Actions",
+    "PAdj Interceptions": "PAdj Interceptions",
+    "Progressive runs per 90": "Progressive Runs",
+    "Accurate crosses, %": "Crossing Accuracy",
+    "Progressive passes per 90": "Progressive Passes",
+    "Prevented goals per 90": "Prevented Goals",
+    "Aerial duels won, %": "Aerial Duels Won",
+    "Accurate long passes, %": "Long Pass Accuracy",
+    "Accurate passes, %": "Pass Accuracy",
+}
+
+def get_metric_labels_for_role(role_columns):
+    # Filter the metric labels dictionary
+    filtered_labels = {metric: metric_labels[metric] for metric in role_columns if metric in metric_labels}
+    
+    return filtered_labels
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -44,33 +85,25 @@ def index():
 @app.route('/players', methods=['GET'])
 def get_players():
     role = request.args.get('role') 
+    tier = request.args.get('tier') 
     players = []
     # Fetch players based on the role
     if role:
-        players = get_players_by_role(role)
+        positions = role_position_mapping.get(role)
+        players = get_players_homepage(positions,tier)
     print(f"Players for {role}: {players}")  # Print the fetched players data
     # Return data as JSON
     return jsonify(players)
 
-def get_players_by_role(role):
-    if role == 'RWB':
-        cursor.execute("""
-            SELECT "Player", "Team", "Age", "Minutes played"
-            FROM players
-            WHERE "Position" && ARRAY['RCB', 'RB', 'RWB', 'RCMF', 'RW', 'RAMF', 'RWF']
-        """)
-    elif role == 'CF':
-        cursor.execute("""
-            SELECT "Player", "Team", "Age", "Minutes played"
-            FROM players
-            WHERE "Position" && ARRAY ['CF']
-        """)
-    elif role == 'GK':
-        cursor.execute("""
-            SELECT "Player", "Team", "Age", "Minutes played"
-            FROM players
-            WHERE "Position" && ARRAY ['GK']
-        """)
+def get_players_homepage(positions,tier):
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT "Player", "Team", "Age", "Minutes played"
+        FROM players
+        WHERE "Position" && %s AND "Tier" = ARRAY[%s]
+    """
+    if positions:
+        cursor.execute(query,(positions,tier))
     else:
         return []
     
@@ -82,7 +115,7 @@ def get_players_by_role(role):
         player = {
             "Player": row[0],        # First column: Player
             "Team": row[1],          # Second column: Team
-            "Age": row[2] if row[2] is not None else 'Unavailable',  # Replace None with 'Unknown'
+            "Age": row[2] if row[2] is not None else 'Unavailable',  # Replace None with 'Unavailable'
             "Minutes played": row[3] # Fourth column: Minutes played
         }
         players.append(player)
@@ -95,24 +128,34 @@ def create_shortlist():
     age_condition = request.args.get('ageCondition')
     age_value = request.args.get('ageValue')
     minutes = request.args.get('minutes')
+    tier = request.args.get('tier')
 
     # Validate and parse input
     age_value = int(age_value) if age_value and age_value.isdigit() else None
     minutes = int(minutes) if minutes and minutes.isdigit() else 0
 
-    if not role:
+    if not role or not tier:
         return jsonify([])
 
-    # Base query (atm base query hardcoded for RWB)
-    query = """
-        SELECT "Player", "Team", "Age", "Minutes played", "Position",
-               "Successful defensive actions per 90", 
-               "PAdj Interceptions",
-               "Progressive runs per 90", 
-               "Accurate crosses, %",
-               "Progressive passes per 90"
+    # Get the position array for the selected role
+    positions = role_position_mapping.get(role)
+    if not positions:
+        return jsonify([])  # Return empty response if the role is invalid
+
+    # Columns common to all roles
+    base_columns = ["Player", "Team", "Age", "Minutes played", "Position"]
+
+    # Get the role-specific columns
+    role_columns = role_column_mapping.get(role, [])
+
+    # Combine base columns and role-specific columns
+    columns_to_select = base_columns + role_columns
+
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT {', '.join(f'"{col}"' for col in columns_to_select)}
         FROM players
-        WHERE "Position" && ARRAY['RCB', 'RB', 'RWB', 'RCMF', 'RW', 'RAMF', 'RWF']
+        WHERE "Position" && %s AND "Tier" = ARRAY[%s]
     """
 
     # Apply filters
@@ -132,36 +175,35 @@ def create_shortlist():
     if filters:
         query += " AND " + " AND ".join(filters)
 
+     # Log the query and parameters for debugging
+    print("Executing query:", query)
+    print("With parameters:", (positions, tier))
+
     # Execute query
-    cursor.execute(query)
-    players = cursor.fetchall()
+    try:
+        cursor.execute(query,(positions, tier))
+        players = cursor.fetchall()
+    except Exception as e:
+        print(f"Database error: {e}")
+        return jsonify({"error": "Database query failed"})
 
     if not players:
         return jsonify({"players": [], "count": 0})
     
-    # Convert to DataFrame with all necessary metrics
-    df = pd.DataFrame(players, columns=["Player", "Team", "Age", "Minutes played", "Position",
-                                        "Successful defensive actions per 90", "PAdj Interceptions",
-                                        "Progressive runs per 90", "Accurate crosses, %", "Progressive passes per 90"])
+    # Convert to DataFrame
+    df = pd.DataFrame(players, columns=columns_to_select)
 
-    # Calculate percentiles and total scores
-    metrics = ["Successful defensive actions per 90", "PAdj Interceptions",
-               "Progressive runs per 90", "Accurate crosses, %",
-               "Progressive passes per 90"]
-    
-    for metric in metrics:
-        valid_values = df[metric].dropna()  # drop NaN
+    # Calculate percentiles and total scores for role-specific columns
+    for metric in role_columns:
+        valid_values = df[metric].dropna()
         df[f"{metric} Percentile"] = df[metric].apply(lambda x: int(percentileofscore(valid_values, x)) if pd.notna(x) else None)
-
+    
     # Fill NaN values with 0 in all percentile columns before summing them
-    df[[f"{metric} Percentile" for metric in metrics]] = df[[f"{metric} Percentile" for metric in metrics]].fillna(0)
+    percentile_columns = [f"{metric} Percentile" for metric in role_columns]
+    df[percentile_columns] = df[percentile_columns].fillna(0)
 
     # Calculate the total score by summing the percentiles
-    df['Total Score'] = df[[f"{metric} Percentile" for metric in metrics]].sum(axis=1)
-    #df['Total Score'] = df[[f"{metric} Percentile" for metric in metrics]].sum(axis=1)
-    # Replace NaN values with 0 in the Percentile columns before summing
-    #df['Total Score'] = df[[f"{metric} Percentile" for metric in metrics]].apply(
-    #    lambda row: sum([value if pd.notna(value) else 0 for value in row]), axis=1)
+    df['Total Score'] = df[percentile_columns].sum(axis=1)
 
     # Get the top 5 players including ties for 5th place
     df = df.sort_values(by='Total Score', ascending=False)
@@ -169,47 +211,40 @@ def create_shortlist():
     shortlist = df[df['Total Score'] >= top_5_threshold]
 
     # Prepare shortlist data for response
-    shortlist_data = shortlist[["Player", "Team", "Age", "Minutes played", "Position"] +  # Include basic player info
-                               metrics +  # Include the original metrics
-                               [f"{metric} Percentile" for metric in metrics] +  # Include the percentiles
-                               ["Total Score"]]  # Include the total score
-    
-    # Convert to dictionary and return as JSON response
     shortlist_data = shortlist.to_dict(orient='records')
-    # Log the data to check if values are correct before sending them
-    print(shortlist_data)  
-    return jsonify({"shortlist_data": shortlist_data, "count": len(df)})
+    print(shortlist_data)
+    return jsonify({"shortlist_data": shortlist_data, "columns": columns_to_select, "count": len(df)})
 
-@app.route('/players', methods=['GET'])
-def get_all_players():
-    # Fetch all players from the database
-    cursor.execute('SELECT "Player" FROM players')
-    players = cursor.fetchall()
-    return jsonify([{"Player": player[0]} for player in players])
+
 
 # Route to serve the player profile page
 @app.route('/player-profile.html')
 def player_profile():
     player_name = request.args.get('player')  # Get player from URL query param
-    compare_to = request.args.get('compareTo', 'S. Minihan')  # Default to 'S.Minihan' if not provided
+    compare_to = request.args.get('compareTo') 
+    role = request.args.get('role')
+    tier = request.args.get('tier')
+    # Get the position array for the selected role
+    positions = role_position_mapping.get(role)
+
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT "Player"
+        FROM players
+        WHERE "Position" && %s AND "Tier" = ARRAY[%s]
+    """
+
     # Fetch all player names for the comparison dropdown
-    cursor.execute('SELECT "Player" FROM players')
-    players = cursor.fetchall()
-    #player_data = get_player_profile_data(player_name)  
+    cursor.execute(query,(positions, tier))
+    players = cursor.fetchall()  
     # Render the page with player data and list of players for comparison
     return render_template('player-profile.html', player_name=player_name, players=players)
 
 # Pizza chart code 
-def create_pizza_chart(name, percentiles, chart_name="pizza_chart"):
+def create_pizza_chart(name, percentiles, role_columns, chart_name="pizza_chart"):
     
     print(percentiles) #Debug
-    params = [
-        "Successful defensive actions per 90", 
-        "PAdj Interceptions",
-        "Progressive runs per 90", 
-        "Accurate crosses, %",
-        "Progressive passes per 90"
-    ]
+    params = role_columns
     # Extract the values from the dictionary into a list
     values = list(percentiles.values())
     print(values)  # For debugging purposes
@@ -286,20 +321,30 @@ def create_pizza_chart(name, percentiles, chart_name="pizza_chart"):
     #return chart_path
 
 # Function to calculate percentiles
-def calculate_percentiles(player_data, metrics, cursor):
+def calculate_percentiles(player_data, role_columns, cursor, positions, tier):
     percentiles = {}
     
-    for metric in metrics:
+    for column in role_columns:
+        # Build the SQL query dynamically
+        query = f"""
+            SELECT "{column}"
+            FROM players
+            WHERE "Position" && %s AND "Tier" = ARRAY[%s] AND "{column}" IS NOT NULL
+        """
+        print(f'Position: {positions}')
+        print(f'Tier: {tier}')
+        print(f"Query: {query}")
+        # Fetch all player names for the comparison dropdown
         # Fetch all values for the metric from the database
-        cursor.execute(f'SELECT "{metric}" FROM players WHERE "{metric}" IS NOT NULL')
-        all_values = [row[0] for row in cursor.fetchall()]  # Flatten results
-
+        cursor.execute(query,(positions, tier))
+        all_values = [row[0] for row in cursor.fetchall()]  # Flatten results 
+        
         # Calculate percentile for the player's value
-        player_value = player_data[metric]
+        player_value = player_data[column]
         if player_value is not None:
-            percentiles[metric] = int(percentileofscore(all_values, player_value))
+            percentiles[column] = int(percentileofscore(all_values, player_value))
         else:
-            percentiles[metric] = None  # Handle missing values
+            percentiles[column] = None  # Handle missing values
 
     return percentiles
 
@@ -307,31 +352,35 @@ def calculate_percentiles(player_data, metrics, cursor):
 def get_player_profile_data():
     player_name = request.args.get('player')
     compare_to = request.args.get('compareTo')
+    role = request.args.get('role')
+    tier= request.args.get('tier')
 
-    metrics = [
-            "Successful defensive actions per 90", "PAdj Interceptions",
-            "Progressive runs per 90", "Accurate crosses, %",
-            "Progressive passes per 90"
-        ]
-    
+    # Get the position array for the selected role
+    positions = role_position_mapping.get(role)
+    print(f"Positions: {positions}")
+    # Get the role-specific columns
+    role_columns = role_column_mapping.get(role, [])
+
     # Fetch metrics for the selected player
-    cursor.execute('SELECT "Successful defensive actions per 90", "PAdj Interceptions", "Progressive runs per 90", "Accurate crosses, %", "Progressive passes per 90" FROM players WHERE "Player" = %s', (player_name,))
+    column_names = ', '.join(f'"{col}"' for col in role_columns)
+    query = f'SELECT {column_names} FROM players WHERE "Player" = %s'
+    cursor.execute(query, (player_name,))
     player_data_raw = cursor.fetchone()
-    player_data = dict(zip(metrics, player_data_raw))  # Create dictionary of player data
-
+    player_data = dict(zip(role_columns, player_data_raw))  # Create dictionary of player data
+    print(f"Player data: {player_data}")
     # Fetch metrics for the comparison player
-    cursor.execute('SELECT "Successful defensive actions per 90", "PAdj Interceptions", "Progressive runs per 90", "Accurate crosses, %", "Progressive passes per 90" FROM players WHERE "Player" = %s', (compare_to,))
+    cursor.execute(query, (compare_to,))
     compare_data_raw = cursor.fetchone()
-    compare_data = dict(zip(metrics, compare_data_raw))  # Create dictionary of comparison player data
+    compare_data = dict(zip(role_columns, compare_data_raw))  # Create dictionary of comparison player data
 
     # Compute percentiles
-    player_percentiles = calculate_percentiles(player_data, metrics, cursor)
+    player_percentiles = calculate_percentiles(player_data, role_columns, cursor, positions, tier)
     print(f"Player percentiles: {player_percentiles}")
-    compare_percentiles = calculate_percentiles(compare_data, metrics, cursor)
+    compare_percentiles = calculate_percentiles(compare_data, role_columns, cursor, positions, tier)
     print(f"Comparison Player percentiles: {compare_percentiles}")
 
-    player_pizza_chart = create_pizza_chart(player_name,player_percentiles,chart_name=f"{player_name}")
-    compare_pizza_chart = create_pizza_chart(compare_to,compare_percentiles,chart_name=f"{compare_to}")
+    player_pizza_chart = create_pizza_chart(player_name,player_percentiles,role_columns,chart_name=f"{player_name}")
+    compare_pizza_chart = create_pizza_chart(compare_to,compare_percentiles,role_columns,chart_name=f"{compare_to}")
 
     # Generate the URLs dynamically using url_for
     player_pizza_chart_url = url_for('static', filename=player_pizza_chart)
@@ -345,9 +394,18 @@ def get_player_profile_data():
         'comparePizzaChart': compare_pizza_chart_url
     })
     
-def get_all_players():
+def get_players_by_role(positions,tier):
     # Retrieve all player names for dropdown 
-    cursor.execute('SELECT "Player" FROM players')
+
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT "Player"
+        FROM players
+        WHERE "Position" && %s AND "Tier" = ARRAY[%s]
+    """
+    print(f"get_players_by_role query: {query}") #debug
+    # Fetch all player names for the comparison dropdown
+    cursor.execute(query,(positions, tier))
     player_names = [row[0] for row in cursor.fetchall()]  # Extract player names from tuples
     return player_names
 
@@ -355,59 +413,78 @@ def get_all_players():
 def create_bar_chart():
     print("create_bar_chart() called")  # Add this for debugging
     # Get the selected player and the shortlist from the form
-    compare_to = request.args.get('compareTo', 'S. Minihan')
+    compare_to = request.args.get('compareTo','')
     shortlist_param = request.args.get('shortlist', '')
-    shortlist = shortlist_param.split(',') if shortlist_param else []
+    role = request.args.get('role')
+    tier = request.args.get('tier')
+    # Decode the URL-encoded shortlist parameter and split it into individual player names
+    shortlist = unquote(shortlist_param).split(',') if shortlist_param else []
+    #shortlist = shortlist_param.split(',') if shortlist_param else []
 
     print(f"Shortlist: {shortlist}")
+
+    # Get the position array for the selected role
+    positions = role_position_mapping.get(role)
+    print(f"Positions: {positions}")
+    # Get the role-specific columns
+    role_columns = role_column_mapping.get(role, [])
+
     # Retrieve all player names for dropdown 
-    player_names = get_all_players()
+    player_names = get_players_by_role(positions,tier)
+    print(f"Player names: {player_names}") #debug
 
-    # Combine the selected player with the shortlist
-    players_to_compare = [compare_to] + shortlist
+    # Combine the selected player with the shortlist, removing any empty values
+    players_to_compare = [p for p in ([compare_to] + shortlist) if p]  # Filter out empty strings
+    print(f"Players to compare: {players_to_compare}")
 
-    # Retrieve the relevant player data for the comparison
-    cursor.execute("""
-        SELECT "Player", 
-               "Successful defensive actions per 90", 
-               "PAdj Interceptions", 
-               "Progressive runs per 90", 
-               "Accurate crosses, %", 
-               "Progressive passes per 90"
-        FROM players
-        WHERE "Player" IN (%s)
-    """, (', '.join(['%s'] * len(players_to_compare)),), tuple(players_to_compare))
+    # Check if players_to_compare is empty to avoid constructing an invalid query
+    if not players_to_compare:
+        print("No players to compare. Exiting.")
+        return jsonify({"error": "No players to compare"}), 400
     
+    #players_to_compare = [compare_to] + shortlist
+
+    # Dynamically generate placeholders for the IN clause
+    in_placeholders = ', '.join(['%s'] * len(players_to_compare))
+
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT "Player", {', '.join(f'"{col}"' for col in role_columns)}
+        FROM players
+        WHERE "Position" && %s 
+          AND "Tier" = ARRAY[%s] 
+          AND "Player" IN ({in_placeholders})
+    """
+    print(f"Query: {query}")  # Debugging
+    # Execute the query with the correct parameters
+    cursor.execute(query, (positions, tier, *players_to_compare))
     players_data = cursor.fetchall()
+    print(f"Results: {players_data}")  # Debugging
 
     # Convert the data into a dictionary for easier processing
     players_dict = {player[0]: player[1:] for player in players_data}
 
-    # Metrics to calculate percentiles for
-    metrics = ["Successful defensive actions per 90", "PAdj Interceptions",
-               "Progressive runs per 90", "Accurate crosses, %",
-               "Progressive passes per 90"]
-
     # Mapping for shorter metric labels
-    metric_labels = {
-        "Successful defensive actions per 90": "Defensive Actions",
-        "PAdj Interceptions": "PAdj Interceptions",
-        "Progressive runs per 90": "Progressive Runs",
-        "Accurate crosses, %": "Crossing Accuracy",
-        "Progressive passes per 90": "Progressive Passes"
-    }
+    metric_labels = get_metric_labels_for_role(role_columns)
 
-    # Fetch the data for percentile calculation for the entire database
-    cursor.execute('SELECT "Player", "Successful defensive actions per 90", "PAdj Interceptions", '
-                   '"Progressive runs per 90", "Accurate crosses, %", "Progressive passes per 90" FROM players')
+    # Fetch the data for percentile calculation for all players in the same role and tier
+    # Build the SQL query dynamically
+    query = f"""
+        SELECT "Player", {', '.join(f'"{col}"' for col in role_columns)}
+        FROM players
+        WHERE "Position" && %s 
+          AND "Tier" = ARRAY[%s]
+    """
+    print(f"Players Query for percentile calculation: {query}")  # Debugging
+    cursor.execute(query, (positions, tier))
     all_players_data = cursor.fetchall()
-
+    print(f"all_players_data: {all_players_data}") #Debugging
     # Convert to a DataFrame to calculate percentiles
     import pandas as pd
-    df = pd.DataFrame(all_players_data, columns=["Player"] + metrics)
+    df = pd.DataFrame(all_players_data, columns=["Player"] + role_columns)
 
     # Calculate percentiles for each metric
-    for metric in metrics:
+    for metric in role_columns:
         valid_values = df[metric].dropna()  # drop NaN
         df[f"{metric} Percentile"] = df[metric].apply(lambda x: int(percentileofscore(valid_values, x)) if pd.notna(x) else None)
 
@@ -415,18 +492,18 @@ def create_bar_chart():
     players_percentiles = {}
     for player in players_to_compare:
         player_data = df[df['Player'] == player]
-        players_percentiles[player] = {metric: player_data[f"{metric} Percentile"].values[0] for metric in metrics}
+        players_percentiles[player] = {metric: player_data[f"{metric} Percentile"].values[0] for metric in role_columns}
 
     # Generate the bar chart
     fig, ax = plt.subplots(figsize=(12, 6))
 
     # Bar chart for percentiles
     bar_width = 0.10
-    positions = range(len(metrics))
+    positions = range(len(role_columns))
 
     for i, player in enumerate(players_to_compare):
         ax.bar([p + i * bar_width for p in positions], 
-               [players_percentiles[player].get(metric, 0) for metric in metrics],
+               [players_percentiles[player].get(metric, 0) for metric in role_columns],
                width=bar_width, label=player)
 
     ax.set_xlabel('Metrics')
@@ -435,7 +512,7 @@ def create_bar_chart():
 
     # Set the x-ticks to the shorter metric labels
     ax.set_xticks([p + bar_width * (len(players_to_compare) - 1) / 2 for p in positions])
-    ax.set_xticklabels([metric_labels[metric] for metric in metrics])  # Use shorter labels
+    ax.set_xticklabels([metric_labels[metric] for metric in role_columns])  # Use shorter labels
 
     # Ensure the y-axis always goes from 0 to 100
     ax.set_ylim(0, 100)  # Set the y-axis limits

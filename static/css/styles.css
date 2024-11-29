@@ -1,0 +1,12 @@
+.logo-container {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1000; /* Ensure it appears above other elements */
+}
+
+.team-logo {
+    width: 150px;
+    height: 150px;
+    object-fit: contain;
+}

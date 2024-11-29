@@ -6,8 +6,13 @@
     <title>Shortlisted Players Comparison</title>
     <!-- Link Bootstrap CSS for consistent styling -->
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <link rel="stylesheet" href="static/css/styles.css">
 </head>
 <body>
+    <!-- Team Logo -->
+    <div class="logo-container">
+        <img src="static/logo.jpg" alt="Team Logo" class="team-logo">
+    </div>
     <div class="container mt-4">
         <div class="mt-3">
             <button onclick="window.location.href='/'" class="btn btn-primary">Homepage</button>
@@ -26,7 +31,6 @@
                     <div class="form-group">
                         <label for="compareTo">Select Player to Compare</label>
                         <select class="form-control" id="compareTo" name="compareTo" required>
-                            <option value="S. Minihan" selected>S. Minihan</option>
                             {% for player in player_names %}
                                 <option value="{{ player }}">{{ player }}</option>
                             {% endfor %}
@@ -62,25 +66,32 @@
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     <script>
         document.getElementById('compareButton').addEventListener('click', function (event) {
-            event.preventDefault(); // Prevent form submission
+        event.preventDefault(); // Prevent form submission
 
-            const playerNames = [];
-            // Get the players from the unordered list (#shortlist)
-            document.querySelectorAll("#shortlist li").forEach(li => {
-                const playerName = li.innerText; // Get the text content of each list item
-                playerNames.push(playerName);
-            });
-
-            // Get the selected player from the dropdown
-            const compareTo = document.getElementById('compareTo').value;
-
-            // Create the query parameters (shortlist and compareTo)
-            const shortlistParam = encodeURIComponent(playerNames.join(','));
-            const compareToParam = encodeURIComponent(compareTo);
-
-            // Redirect to compare.html with the correct query parameters
-            window.location.href = `compare.html?compareTo=${compareToParam}&shortlist=${shortlistParam}`;
+        const playerNames = [];
+        // Get the players from the unordered list (#shortlist)
+        document.querySelectorAll("#shortlist li").forEach(li => {
+            const playerName = li.innerText; // Get the text content of each list item
+            playerNames.push(playerName);
         });
+
+        // Get the selected player from the dropdown
+        const compareTo = document.getElementById('compareTo').value;
+
+        // Get the current URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const role = urlParams.get('role'); // Get the 'role' parameter
+        const tier = urlParams.get('tier'); // Get the 'tier' parameter
+
+        // Create the query parameters (shortlist, compareTo, role, and tier)
+        const shortlistParam = encodeURIComponent(playerNames.join(','));
+        const compareToParam = encodeURIComponent(compareTo);
+        const roleParam = encodeURIComponent(role);
+        const tierParam = encodeURIComponent(tier);
+
+        // Redirect to compare.html with the correct query parameters
+        window.location.href = `compare.html?compareTo=${compareToParam}&shortlist=${shortlistParam}&role=${roleParam}&tier=${tierParam}`;
+    });
     </script>
 </body>
 </html>
