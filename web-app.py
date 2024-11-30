@@ -86,6 +86,7 @@ def index():
 def get_players():
     role = request.args.get('role') 
     tier = request.args.get('tier') 
+    print(f"Received tier: {tier}") #debugging
     players = []
     # Fetch players based on the role
     if role:
@@ -248,7 +249,9 @@ def create_pizza_chart(name, percentiles, role_columns, chart_name="pizza_chart"
     # Extract the values from the dictionary into a list
     values = list(percentiles.values())
     print(values)  # For debugging purposes
-    #values = [int(float(percentiles[metric])) for metric in metrics]
+    # Replace None elements with 0
+    values = [0 if value is None else value for value in values]
+    print(f"Check if None elements in values have been replaced with 0: {values}")  # For debugging purposes
 
     # Change this line to specify 5 different colors
     slice_colors = ["red"] + ["cyan"] + ["orange"] + ["green"] + ["blue"]
